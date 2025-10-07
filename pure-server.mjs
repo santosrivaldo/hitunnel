@@ -10,11 +10,10 @@ function generateId() {
     return `${m}-${a}-${n}`;
 }
 
-function extractSubdomain(hostname) {
-    if (!hostname) return null;
-    const parts = hostname.split('.');
-    if (parts.length < 2) return null;
-    return parts[0];
+function extractTunnelId(path) {
+    // Extract tunnel ID from /tunnel/ID pattern
+    const match = path.match(/^\/tunnel\/([a-z0-9\-]+)$/);
+    return match ? match[1] : null;
 }
 
 export default function createServer(opt = {}) {
@@ -24,14 +23,14 @@ export default function createServer(opt = {}) {
     const server = http.createServer(async (req, res) => {
         try {
             const hostname = req.headers.host;
-            const subdomain = extractSubdomain(hostname);
             const url = new URL(req.url, `http://${hostname || 'localhost'}`);
             const path = url.pathname;
+            const tunnelId = extractTunnelId(path);
             
             // Debug logging
-            console.log(`Request: ${req.method} ${path} from ${hostname} (subdomain: ${subdomain})`);
+            console.log(`Request: ${req.method} ${path} from ${hostname} (tunnel: ${tunnelId})`);
 
-            // API endpoints (no subdomain routing)
+            // API endpoints
             if (path === '/api/status') {
                 const body = JSON.stringify({
                     tunnels: stats.tunnels,
@@ -56,51 +55,34 @@ export default function createServer(opt = {}) {
                 return;
             }
 
-            // Handle root path
-            if (path === '/') {
-                // Check for ?new parameter first
-                if (url.searchParams.has('new')) {
-                    const id = generateId();
-                    clients.set(id, { 
-                        id, 
-                        createdAt: Date.now(), 
-                        connectedSockets: 0,
-                        targetHost: null,
-                        targetPort: null,
-                        connections: new Set()
-                    });
-                    stats.tunnels = clients.size;
-                    const host = req.headers.host || '';
-                    const schema = opt.secure ? 'https' : 'http';
-                    const info = { id, port: 0, max_conn_count: opt.max_tcp_sockets || 10, url: `${schema}://${id}.${host}` };
-                    res.writeHead(200, { 'content-type': 'application/json' });
-                    res.end(JSON.stringify(info));
-                    return;
-                }
-                
-                // Default landing page (no subdomain)
-                res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-                res.end(`
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Pure Tunnel Server</title>
-    <meta charset="utf-8">
-</head>
-<body>
-    <h1>Pure Tunnel Server</h1>
-    <p>Server is running and ready to create tunnels.</p>
-    <p>Create a new tunnel: <a href="/?new">/?new</a></p>
-    <p>API Status: <a href="/api/status">/api/status</a></p>
-</body>
-</html>
-                `);
+            // Create tunnel endpoint
+            if (path === '/' && url.searchParams.has('new')) {
+                const id = generateId();
+                clients.set(id, { 
+                    id, 
+                    createdAt: Date.now(), 
+                    connectedSockets: 0,
+                    targetHost: null,
+                    targetPort: null,
+                    connections: new Set()
+                });
+                stats.tunnels = clients.size;
+                const host = req.headers.host || '';
+                const schema = opt.secure ? 'https' : 'http';
+                const info = { 
+                    id, 
+                    port: 0, 
+                    max_conn_count: opt.max_tcp_sockets || 10, 
+                    url: `${schema}://${host}/tunnel/${id}` 
+                };
+                res.writeHead(200, { 'content-type': 'application/json' });
+                res.end(JSON.stringify(info));
                 return;
             }
 
-            // Subdomain routing - proxy to client
-            if (subdomain && clients.has(subdomain)) {
-                const client = clients.get(subdomain);
+            // Tunnel endpoint routing - proxy to client
+            if (tunnelId && clients.has(tunnelId)) {
+                const client = clients.get(tunnelId);
                 
                 // If client not connected, return 502
                 if (!client.targetHost || !client.targetPort) {
@@ -109,11 +91,14 @@ export default function createServer(opt = {}) {
                     return;
                 }
 
+                // Remove /tunnel/ID from path for proxy
+                const proxyPath = req.url.replace(`/tunnel/${tunnelId}`, '') || '/';
+
                 // Proxy request to client
                 const proxyReq = http.request({
                     hostname: client.targetHost,
                     port: client.targetPort,
-                    path: req.url,
+                    path: proxyPath,
                     method: req.method,
                     headers: {
                         ...req.headers,
@@ -134,39 +119,10 @@ export default function createServer(opt = {}) {
                 return;
             }
 
-            // Back-compat: /:id creates tunnel
-            const parts = path.split('/').filter(Boolean);
-            if (parts.length === 1 && !subdomain) {
-                const reqId = parts[0];
-                if (!/^(?:[a-z0-9][a-z0-9\-]{4,63}[a-z0-9]|[a-z0-9]{4,63})$/.test(reqId)) {
-                    const body = JSON.stringify({ message: 'Invalid subdomain. Must be lowercase 4-63 chars.' });
-                    res.writeHead(403, { 'content-type': 'application/json' });
-                    res.end(body);
-                    return;
-                }
-                if (!clients.has(reqId)) {
-                    clients.set(reqId, { 
-                        id: reqId, 
-                        createdAt: Date.now(), 
-                        connectedSockets: 0,
-                        targetHost: null,
-                        targetPort: null,
-                        connections: new Set()
-                    });
-                    stats.tunnels = clients.size;
-                }
-                const host = req.headers.host || '';
-                const schema = opt.secure ? 'https' : 'http';
-                const info = { id: reqId, port: 0, max_conn_count: opt.max_tcp_sockets || 10, url: `${schema}://${reqId}.${host}` };
-                res.writeHead(200, { 'content-type': 'application/json' });
-                res.end(JSON.stringify(info));
-                return;
-            }
-
-            // Fallback - always return something
-            console.log(`Fallback: ${req.method} ${path} not handled`);
-            res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-            res.end(`
+            // Landing page
+            if (path === '/') {
+                res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+                res.end(`
 <!DOCTYPE html>
 <html>
 <head>
@@ -175,14 +131,19 @@ export default function createServer(opt = {}) {
 </head>
 <body>
     <h1>Pure Tunnel Server</h1>
-    <p>Path: ${path}</p>
-    <p>Host: ${hostname}</p>
-    <p>Subdomain: ${subdomain}</p>
-    <p>Create tunnel: <a href="/?new">/?new</a></p>
+    <p>Server is running and ready to create tunnels.</p>
+    <p>Create a new tunnel: <a href="/?new">/?new</a></p>
     <p>API Status: <a href="/api/status">/api/status</a></p>
+    <p>Active tunnels: ${stats.tunnels}</p>
 </body>
 </html>
-            `);
+                `);
+                return;
+            }
+
+            // 404 for unknown paths
+            res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+            res.end('Not Found');
         } catch (err) {
             console.error('Server error:', err);
             res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
@@ -192,16 +153,20 @@ export default function createServer(opt = {}) {
 
     // WebSocket upgrade handling
     server.on('upgrade', (req, socket, head) => {
-        const hostname = req.headers.host;
-        const subdomain = extractSubdomain(hostname);
+        const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+        const path = url.pathname;
+        const tunnelId = extractTunnelId(path);
         
-        if (subdomain && clients.has(subdomain)) {
-            const client = clients.get(subdomain);
+        if (tunnelId && clients.has(tunnelId)) {
+            const client = clients.get(tunnelId);
             
             if (!client.targetHost || !client.targetPort) {
                 socket.destroy();
                 return;
             }
+
+            // Remove /tunnel/ID from path for proxy
+            const proxyPath = req.url.replace(`/tunnel/${tunnelId}`, '') || '/';
 
             // Proxy WebSocket to client
             const proxySocket = net.createConnection(client.targetPort, client.targetHost, () => {
@@ -257,5 +222,3 @@ export default function createServer(opt = {}) {
 
     return server;
 }
-
-
