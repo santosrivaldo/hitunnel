@@ -49,9 +49,48 @@ export default function createServer(opt = {}) {
                     return;
                 }
                 const client = clients.get(id);
-                const body = JSON.stringify({ connected_sockets: client.connectedSockets || 0 });
+                const body = JSON.stringify({ 
+                    connected_sockets: client.connectedSockets || 0,
+                    connected: !!(client.targetHost && client.targetPort),
+                    target: client.targetHost ? `${client.targetHost}:${client.targetPort}` : null
+                });
                 res.writeHead(200, { 'content-type': 'application/json' });
                 res.end(body);
+                return;
+            }
+
+            // Tunnel info page
+            if (tunnelId && clients.has(tunnelId) && path === `/tunnel/${tunnelId}`) {
+                const client = clients.get(tunnelId);
+                const isConnected = !!(client.targetHost && client.targetPort);
+                
+                res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+                res.end(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tunnel ${tunnelId}</title>
+    <meta charset="utf-8">
+    <meta http-equiv="refresh" content="10">
+</head>
+<body>
+    <h1>Tunnel ${tunnelId}</h1>
+    <p>Status: <span style="color: ${isConnected ? 'green' : 'orange'};">${isConnected ? 'Connected' : 'Waiting for Connection'}</span></p>
+    ${isConnected ? `
+        <p>Target: ${client.targetHost}:${client.targetPort}</p>
+        <p>Active connections: ${client.connectedSockets}</p>
+    ` : `
+        <p>To connect this tunnel, run:</p>
+        <pre>lt --host https://tunnel.tudoparasualavanderia.com.br --port 8080</pre>
+        <p>Or use the localtunnel client with this server URL.</p>
+    `}
+    <p><a href="/api/tunnels/${tunnelId}/status">API Status</a></p>
+    <script>
+        setTimeout(() => location.reload(), 10000);
+    </script>
+</body>
+</html>
+                `);
                 return;
             }
 
@@ -84,10 +123,28 @@ export default function createServer(opt = {}) {
             if (tunnelId && clients.has(tunnelId)) {
                 const client = clients.get(tunnelId);
                 
-                // If client not connected, return 502
+                // If client not connected, show waiting page
                 if (!client.targetHost || !client.targetPort) {
-                    res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
-                    res.end('Tunnel not connected');
+                    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+                    res.end(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tunnel ${tunnelId} - Waiting for Connection</title>
+    <meta charset="utf-8">
+    <meta http-equiv="refresh" content="5">
+</head>
+<body>
+    <h1>Tunnel ${tunnelId}</h1>
+    <p>Waiting for client connection...</p>
+    <p>Status: <span style="color: orange;">Connecting</span></p>
+    <p>This page will refresh automatically.</p>
+    <script>
+        setTimeout(() => location.reload(), 5000);
+    </script>
+</body>
+</html>
+                    `);
                     return;
                 }
 
@@ -184,39 +241,57 @@ export default function createServer(opt = {}) {
 
     // Handle client connections (localtunnel protocol)
     server.on('connection', (socket) => {
+        let buffer = '';
+        
         socket.on('data', (data) => {
-            // Simple protocol: first message contains tunnel info
-            try {
-                const message = data.toString();
-                if (message.startsWith('TUNNEL:')) {
-                    const parts = message.split(':');
-                    if (parts.length >= 3) {
-                        const tunnelId = parts[1];
-                        const targetHost = parts[2];
-                        const targetPort = parseInt(parts[3]) || 80;
-                        
-                        if (clients.has(tunnelId)) {
-                            const client = clients.get(tunnelId);
-                            client.targetHost = targetHost;
-                            client.targetPort = targetPort;
-                            client.connections.add(socket);
-                            client.connectedSockets = client.connections.size;
+            buffer += data.toString();
+            
+            // Look for tunnel registration
+            if (buffer.includes('\n')) {
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || ''; // Keep incomplete line
+                
+                for (const line of lines) {
+                    if (line.startsWith('TUNNEL:')) {
+                        const parts = line.split(':');
+                        if (parts.length >= 3) {
+                            const tunnelId = parts[1];
+                            const targetHost = parts[2];
+                            const targetPort = parseInt(parts[3]) || 80;
                             
-                            socket.on('close', () => {
-                                client.connections.delete(socket);
+                            console.log(`Client connecting to tunnel ${tunnelId} -> ${targetHost}:${targetPort}`);
+                            
+                            if (clients.has(tunnelId)) {
+                                const client = clients.get(tunnelId);
+                                client.targetHost = targetHost;
+                                client.targetPort = targetPort;
+                                client.connections.add(socket);
                                 client.connectedSockets = client.connections.size;
-                            });
-                            
-                            socket.write('OK\n');
-                        } else {
-                            socket.write('ERROR: Tunnel not found\n');
-                            socket.destroy();
+                                
+                                socket.on('close', () => {
+                                    client.connections.delete(socket);
+                                    client.connectedSockets = client.connections.size;
+                                    console.log(`Client disconnected from tunnel ${tunnelId}`);
+                                });
+                                
+                                socket.write('OK\n');
+                                console.log(`Tunnel ${tunnelId} connected successfully`);
+                            } else {
+                                socket.write('ERROR: Tunnel not found\n');
+                                socket.destroy();
+                            }
                         }
                     }
                 }
-            } catch (err) {
-                socket.destroy();
             }
+        });
+        
+        socket.on('close', () => {
+            console.log('Client socket closed');
+        });
+        
+        socket.on('error', (err) => {
+            console.log('Client socket error:', err.message);
         });
     });
 
