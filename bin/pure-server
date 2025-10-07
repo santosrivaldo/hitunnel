@@ -29,7 +29,7 @@ const requireFromHere = createRequire(__filename);
     })
     .argv;
 
-  const { default: createServer } = await import(pathToFileURL(path.join(__dirname, '..', 'pure-server.js')).href);
+  const { default: createServer } = await import(pathToFileURL(path.join(__dirname, '..', 'pure-server.mjs')).href);
 
   const server = createServer({
     max_tcp_sockets: argv['max-sockets'],
