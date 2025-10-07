@@ -72,21 +72,55 @@ export default function createServer(opt = {}) {
     <title>Tunnel ${tunnelId}</title>
     <meta charset="utf-8">
     <meta http-equiv="refresh" content="10">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .status { padding: 10px; border-radius: 5px; margin: 10px 0; }
+        .connected { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .waiting { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 3px; }
+        .auto-refresh { color: #666; font-size: 0.9em; }
+    </style>
 </head>
 <body>
-    <h1>Tunnel ${tunnelId}</h1>
-    <p>Status: <span style="color: ${isConnected ? 'green' : 'orange'};">${isConnected ? 'Connected' : 'Waiting for Connection'}</span></p>
+    <h1>🔗 Tunnel ${tunnelId}</h1>
+    
+    <div class="status ${isConnected ? 'connected' : 'waiting'}">
+        <strong>Status:</strong> ${isConnected ? '✅ Connected' : '⏳ Waiting for Connection'}
+    </div>
+    
     ${isConnected ? `
-        <p>Target: ${client.targetHost}:${client.targetPort}</p>
-        <p>Active connections: ${client.connectedSockets}</p>
+        <p><strong>Target:</strong> ${client.targetHost}:${client.targetPort}</p>
+        <p><strong>Active connections:</strong> ${client.connectedSockets}</p>
+        <p><strong>Created:</strong> ${new Date(client.createdAt).toLocaleString()}</p>
+        <p><strong>URL:</strong> <a href="/tunnel/${tunnelId}/">https://tunnel.tudoparasualavanderia.com.br/tunnel/${tunnelId}/</a></p>
     ` : `
-        <p>To connect this tunnel, run:</p>
-        <pre>lt --host https://tunnel.tudoparasualavanderia.com.br --port 8080</pre>
-        <p>Or use the localtunnel client with this server URL.</p>
+        <h3>📋 Connection Instructions:</h3>
+        <p>To connect this tunnel, run one of these commands:</p>
+        <pre># Using localtunnel CLI
+lt --host https://tunnel.tudoparasualavanderia.com.br --port 8080
+
+# Or specify the tunnel ID
+lt --host https://tunnel.tudoparasualavanderia.com.br --port 8080 --subdomain ${tunnelId}</pre>
+        
+        <p><strong>Note:</strong> The tunnel will stay active and wait for connections.</p>
     `}
-    <p><a href="/api/tunnels/${tunnelId}/status">API Status</a></p>
+    
+    <hr>
+    <p><a href="/api/tunnels/${tunnelId}/status">📊 API Status (JSON)</a> | <a href="/">🏠 Home</a></p>
+    <p class="auto-refresh">🔄 Auto-refresh every 10 seconds</p>
+    
     <script>
-        setTimeout(() => location.reload(), 10000);
+        // Auto-refresh with visual feedback
+        let countdown = 10;
+        const refreshElement = document.querySelector('.auto-refresh');
+        
+        setInterval(() => {
+            countdown--;
+            refreshElement.textContent = `🔄 Auto-refresh in ${countdown} seconds`;
+            if (countdown <= 0) {
+                location.reload();
+            }
+        }, 1000);
     </script>
 </body>
 </html>
@@ -242,6 +276,8 @@ export default function createServer(opt = {}) {
     // Handle client connections (localtunnel protocol)
     server.on('connection', (socket) => {
         let buffer = '';
+        let tunnelId = null;
+        let heartbeatInterval = null;
         
         socket.on('data', (data) => {
             buffer += data.toString();
@@ -255,7 +291,7 @@ export default function createServer(opt = {}) {
                     if (line.startsWith('TUNNEL:')) {
                         const parts = line.split(':');
                         if (parts.length >= 3) {
-                            const tunnelId = parts[1];
+                            tunnelId = parts[1];
                             const targetHost = parts[2];
                             const targetPort = parseInt(parts[3]) || 80;
                             
@@ -268,7 +304,17 @@ export default function createServer(opt = {}) {
                                 client.connections.add(socket);
                                 client.connectedSockets = client.connections.size;
                                 
+                                // Start heartbeat to keep connection alive
+                                heartbeatInterval = setInterval(() => {
+                                    if (!socket.destroyed) {
+                                        socket.write('PING\n');
+                                    }
+                                }, 30000); // Ping every 30 seconds
+                                
                                 socket.on('close', () => {
+                                    if (heartbeatInterval) {
+                                        clearInterval(heartbeatInterval);
+                                    }
                                     client.connections.delete(socket);
                                     client.connectedSockets = client.connections.size;
                                     console.log(`Client disconnected from tunnel ${tunnelId}`);
@@ -281,18 +327,31 @@ export default function createServer(opt = {}) {
                                 socket.destroy();
                             }
                         }
+                    } else if (line.trim() === 'PONG') {
+                        // Client responded to heartbeat
+                        console.log(`Heartbeat received from tunnel ${tunnelId}`);
                     }
                 }
             }
         });
         
         socket.on('close', () => {
-            console.log('Client socket closed');
+            if (heartbeatInterval) {
+                clearInterval(heartbeatInterval);
+            }
+            console.log(`Client socket closed for tunnel ${tunnelId}`);
         });
         
         socket.on('error', (err) => {
-            console.log('Client socket error:', err.message);
+            if (heartbeatInterval) {
+                clearInterval(heartbeatInterval);
+            }
+            console.log(`Client socket error for tunnel ${tunnelId}:`, err.message);
         });
+        
+        // Set keep-alive options
+        socket.setKeepAlive(true, 60000); // Enable keep-alive, 60 seconds
+        socket.setTimeout(120000); // 2 minutes timeout
     });
 
     return server;
