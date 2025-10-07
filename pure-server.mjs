@@ -116,7 +116,7 @@ lt --host https://tunnel.tudoparasualavanderia.com.br --port 8080 --subdomain ${
         
         setInterval(() => {
             countdown--;
-            refreshElement.textContent = `🔄 Auto-refresh in ${countdown} seconds`;
+            refreshElement.textContent = '🔄 Auto-refresh in ' + countdown + ' seconds';
             if (countdown <= 0) {
                 location.reload();
             }
