@@ -32,6 +32,8 @@
     "dev": "node-dev bin/server --port 3000",
     "start:esm": "node -r esm bin/server --port 3000",
     "start:auto": "node -r esm bin/auto-server --port 3000",
-    "start:pure": "node bin/pure-server --port 3002"
+    "start:pure": "node bin/pure-server --port 3002",
+    "client": "node bin/tunnel-client",
+    "client:help": "node bin/tunnel-client --help"
   }
 }

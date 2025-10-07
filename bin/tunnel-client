@@ -1,0 +1,73 @@
+#!/usr/bin/env node
+
+const path = require('path');
+const TunnelClient = require(path.join(__dirname, '..', 'tunnel-client.js'));
+
+// Parse command line arguments
+function parseArgs() {
+    const args = process.argv.slice(2);
+    const options = {
+        host: 'localhost',
+        port: 3000,
+        localPort: 8080,
+        localHost: 'localhost',
+        secure: false
+    };
+
+    for (let i = 0; i < args.length; i++) {
+        switch (args[i]) {
+            case '--host':
+                options.host = args[++i];
+                break;
+            case '--port':
+                options.port = parseInt(args[++i]);
+                break;
+            case '--local-port':
+                options.localPort = parseInt(args[++i]);
+                break;
+            case '--local-host':
+                options.localHost = args[++i];
+                break;
+            case '--secure':
+                options.secure = true;
+                break;
+            case '--help':
+                console.log(`
+Tunnel Client - Cliente de túnel Node.js
+
+Uso: node bin/tunnel-client [opções]
+
+Opções:
+  --host <host>        Servidor de túnel (padrão: localhost)
+  --port <port>        Porta do servidor (padrão: 3000)
+  --local-port <port>  Porta local a expor (padrão: 8080)
+  --local-host <host>  Host local (padrão: localhost)
+  --secure            Usar HTTPS
+  --help              Mostrar esta ajuda
+
+Exemplos:
+  node bin/tunnel-client --host tunnel.exemplo.com --port 3000 --local-port 8080
+  node bin/tunnel-client --host tunnel.exemplo.com --secure --local-port 3000
+  node bin/tunnel-client --host https://tunnel.tudoparasualavanderia.com.br --secure --local-port 8080
+                `);
+                process.exit(0);
+        }
+    }
+
+    return options;
+}
+
+// Executar cliente
+const options = parseArgs();
+const client = new TunnelClient(options);
+
+// Tratar sinais para cleanup
+process.on('SIGINT', () => {
+    console.log('\n🛑 Encerrando cliente...');
+    if (client.serverSocket) {
+        client.serverSocket.destroy();
+    }
+    process.exit(0);
+});
+
+client.start().catch(console.error);
