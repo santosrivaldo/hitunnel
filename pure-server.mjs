@@ -11,6 +11,14 @@ function extractTunnelId(path, storeId) {
     const tunnelMatch = path.match(/^\/tunnel\/([a-z0-9\-]+)$/);
     if (tunnelMatch) return tunnelMatch[1];
     
+    // Also check for direct /ID pattern (for localtunnel compatibility)
+    const directMatch = path.match(/^\/([a-z0-9\-]+)$/);
+    if (directMatch) return directMatch[1];
+    
+    // Check if path starts with /ID/ (for sub-paths)
+    const subPathMatch = path.match(/^\/([a-z0-9\-]+)\//);
+    if (subPathMatch) return subPathMatch[1];
+    
     return null;
 }
 
@@ -69,6 +77,28 @@ export default function createServer(opt = {}) {
             if (path === '/api/store-id' && req.method === 'GET') {
                 res.writeHead(200, { 'content-type': 'application/json' });
                 res.end(JSON.stringify({ store_id: storeId }));
+                return;
+            }
+
+            // Get tunnel info for current STORE_ID
+            if (path === '/api/tunnel-info' && req.method === 'GET') {
+                const client = clients.get(storeId);
+                const isConnected = !!(client && client.targetHost && client.targetPort);
+                const host = req.headers.host || '';
+                const schema = opt.secure ? 'https' : 'http';
+                
+                const info = {
+                    store_id: storeId,
+                    tunnel_id: storeId,
+                    url: `${schema}://${host}/tunnel/${storeId}`,
+                    connected: isConnected,
+                    target: client ? `${client.targetHost}:${client.targetPort}` : null,
+                    created_at: client ? new Date(client.createdAt).toISOString() : null,
+                    active_connections: client ? client.connectedSockets : 0
+                };
+                
+                res.writeHead(200, { 'content-type': 'application/json' });
+                res.end(JSON.stringify(info));
                 return;
             }
 
@@ -161,7 +191,27 @@ lt --host https://tunnel.tudoparasualavanderia.com.br --port 8080 --subdomain ${
 
             // Create tunnel endpoint
             if (path === '/' && url.searchParams.has('new')) {
-                const id = generateId(storeId);
+                // Use STORE_ID directly as tunnel ID
+                const id = storeId;
+                
+                // Check if tunnel already exists
+                if (clients.has(id)) {
+                    const existingClient = clients.get(id);
+                    const host = req.headers.host || '';
+                    const schema = opt.secure ? 'https' : 'http';
+                    const info = { 
+                        id, 
+                        port: 0, 
+                        max_conn_count: opt.max_tcp_sockets || 10, 
+                        url: `${schema}://${host}/tunnel/${id}`,
+                        store_id: storeId,
+                        connected: !!(existingClient.targetHost && existingClient.targetPort)
+                    };
+                    res.writeHead(200, { 'content-type': 'application/json' });
+                    res.end(JSON.stringify(info));
+                    return;
+                }
+                
                 clients.set(id, { 
                     id, 
                     createdAt: Date.now(), 
@@ -214,8 +264,13 @@ lt --host https://tunnel.tudoparasualavanderia.com.br --port 8080 --subdomain ${
                     return;
                 }
 
-                // Remove /tunnel/ID from path for proxy
-                const proxyPath = req.url.replace(`/tunnel/${tunnelId}`, '') || '/';
+                // Remove tunnel ID from path for proxy
+                let proxyPath = req.url;
+                if (proxyPath.startsWith(`/tunnel/${tunnelId}`)) {
+                    proxyPath = proxyPath.replace(`/tunnel/${tunnelId}`, '') || '/';
+                } else if (proxyPath.startsWith(`/${tunnelId}`)) {
+                    proxyPath = proxyPath.replace(`/${tunnelId}`, '') || '/';
+                }
 
                 // Proxy request to client
                 const proxyReq = http.request({
@@ -288,8 +343,13 @@ lt --host https://tunnel.tudoparasualavanderia.com.br --port 8080 --subdomain ${
                 return;
             }
 
-            // Remove /tunnel/ID from path for proxy
-            const proxyPath = req.url.replace(`/tunnel/${tunnelId}`, '') || '/';
+            // Remove tunnel ID from path for proxy
+            let proxyPath = req.url;
+            if (proxyPath.startsWith(`/tunnel/${tunnelId}`)) {
+                proxyPath = proxyPath.replace(`/tunnel/${tunnelId}`, '') || '/';
+            } else if (proxyPath.startsWith(`/${tunnelId}`)) {
+                proxyPath = proxyPath.replace(`/${tunnelId}`, '') || '/';
+            }
 
             // Proxy WebSocket to client
             const proxySocket = net.createConnection(client.targetPort, client.targetHost, () => {
