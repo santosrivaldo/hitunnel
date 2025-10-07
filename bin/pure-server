@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+
+const http = require('http');
+const path = require('path');
+
+// Load ESM module file explicitly
+const { pathToFileURL } = require('url');
+const { createRequire } = require('module');
+const requireFromHere = createRequire(__filename);
+
+(async () => {
+  const argv = requireFromHere('optimist')
+    .usage('Usage: $0 --port [num]')
+    .options('secure', {
+      default: false,
+      describe: 'indicate https schema for generated urls'
+    })
+    .options('port', {
+      default: '3002',
+      describe: 'listen port'
+    })
+    .options('address', {
+      default: '0.0.0.0',
+      describe: 'bind address'
+    })
+    .options('max-sockets', {
+      default: 10,
+      describe: 'max tcp sockets per client (metadata only)'
+    })
+    .argv;
+
+  const { default: createServer } = await import(pathToFileURL(path.join(__dirname, '..', 'pure-server.js')).href);
+
+  const server = createServer({
+    max_tcp_sockets: argv['max-sockets'],
+    secure: argv.secure,
+  });
+
+  server.listen(argv.port, argv.address, () => {
+    console.log('pure-server listening on port:', server.address().port);
+  });
+})();
+
+
