@@ -1,31 +1,30 @@
 import http from 'http';
 import net from 'net';
 
-function generateId() {
-    const animals = ['lion','tiger','eagle','whale','otter','falcon','panda','wolf','koala','dolphin'];
-    const moods = ['brave','calm','proud','swift','clever','happy','bright','mighty','gentle','bold'];
-    const a = animals[Math.floor(Math.random() * animals.length)];
-    const m = moods[Math.floor(Math.random() * moods.length)];
-    const n = (Math.floor(Math.random() * 90) + 10).toString();
-    return `${m}-${a}-${n}`;
+function generateId(storeId) {
+    // Use STORE_ID directly as endpoint ID
+    return storeId;
 }
 
-function extractTunnelId(path) {
+function extractTunnelId(path, storeId) {
     // Extract tunnel ID from /tunnel/ID pattern
-    const match = path.match(/^\/tunnel\/([a-z0-9\-]+)$/);
-    return match ? match[1] : null;
+    const tunnelMatch = path.match(/^\/tunnel\/([a-z0-9\-]+)$/);
+    if (tunnelMatch) return tunnelMatch[1];
+    
+    return null;
 }
 
 export default function createServer(opt = {}) {
     const clients = new Map();
     const stats = { tunnels: 0 };
+    let storeId = process.env.STORE_ID || 'default-store';
 
     const server = http.createServer(async (req, res) => {
         try {
             const hostname = req.headers.host;
             const url = new URL(req.url, `http://${hostname || 'localhost'}`);
             const path = url.pathname;
-            const tunnelId = extractTunnelId(path);
+            const tunnelId = extractTunnelId(path, storeId);
             
             // Debug logging
             console.log(`Request: ${req.method} ${path} from ${hostname} (tunnel: ${tunnelId})`);
@@ -35,9 +34,41 @@ export default function createServer(opt = {}) {
                 const body = JSON.stringify({
                     tunnels: stats.tunnels,
                     mem: process.memoryUsage(),
+                    store_id: storeId,
                 });
                 res.writeHead(200, { 'content-type': 'application/json' });
                 res.end(body);
+                return;
+            }
+
+            // Set STORE_ID endpoint
+            if (path === '/api/store-id' && req.method === 'POST') {
+                let body = '';
+                req.on('data', chunk => body += chunk.toString());
+                req.on('end', () => {
+                    try {
+                        const data = JSON.parse(body);
+                        if (data.store_id && typeof data.store_id === 'string') {
+                            storeId = data.store_id;
+                            console.log(`STORE_ID updated to: ${storeId}`);
+                            res.writeHead(200, { 'content-type': 'application/json' });
+                            res.end(JSON.stringify({ success: true, store_id: storeId }));
+                        } else {
+                            res.writeHead(400, { 'content-type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'Invalid store_id' }));
+                        }
+                    } catch (err) {
+                        res.writeHead(400, { 'content-type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'Invalid JSON' }));
+                    }
+                });
+                return;
+            }
+
+            // Get STORE_ID endpoint
+            if (path === '/api/store-id' && req.method === 'GET') {
+                res.writeHead(200, { 'content-type': 'application/json' });
+                res.end(JSON.stringify({ store_id: storeId }));
                 return;
             }
 
@@ -130,7 +161,7 @@ lt --host https://tunnel.tudoparasualavanderia.com.br --port 8080 --subdomain ${
 
             // Create tunnel endpoint
             if (path === '/' && url.searchParams.has('new')) {
-                const id = generateId();
+                const id = generateId(storeId);
                 clients.set(id, { 
                     id, 
                     createdAt: Date.now(), 
@@ -146,7 +177,8 @@ lt --host https://tunnel.tudoparasualavanderia.com.br --port 8080 --subdomain ${
                     id, 
                     port: 0, 
                     max_conn_count: opt.max_tcp_sockets || 10, 
-                    url: `${schema}://${host}/tunnel/${id}` 
+                    url: `${schema}://${host}/tunnel/${id}`,
+                    store_id: storeId
                 };
                 res.writeHead(200, { 'content-type': 'application/json' });
                 res.end(JSON.stringify(info));
