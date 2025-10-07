@@ -27,6 +27,9 @@ export default function createServer(opt = {}) {
             const subdomain = extractSubdomain(hostname);
             const url = new URL(req.url, `http://${hostname || 'localhost'}`);
             const path = url.pathname;
+            
+            // Debug logging
+            console.log(`Request: ${req.method} ${path} from ${hostname} (subdomain: ${subdomain})`);
 
             // API endpoints (no subdomain routing)
             if (path === '/api/status') {
@@ -53,8 +56,9 @@ export default function createServer(opt = {}) {
                 return;
             }
 
-            // Create tunnel endpoint - handle both / and /?new
+            // Handle root path
             if (path === '/') {
+                // Check for ?new parameter first
                 if (url.searchParams.has('new')) {
                     const id = generateId();
                     clients.set(id, { 
@@ -74,10 +78,9 @@ export default function createServer(opt = {}) {
                     return;
                 }
                 
-                // Landing page for root domain (no subdomain)
-                if (!subdomain) {
-                    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-                    res.end(`
+                // Default landing page (no subdomain)
+                res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+                res.end(`
 <!DOCTYPE html>
 <html>
 <head>
@@ -91,9 +94,8 @@ export default function createServer(opt = {}) {
     <p>API Status: <a href="/api/status">/api/status</a></p>
 </body>
 </html>
-                    `);
-                    return;
-                }
+                `);
+                return;
             }
 
             // Subdomain routing - proxy to client
@@ -161,8 +163,26 @@ export default function createServer(opt = {}) {
                 return;
             }
 
-            res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-            res.end('Not Found');
+            // Fallback - always return something
+            console.log(`Fallback: ${req.method} ${path} not handled`);
+            res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+            res.end(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pure Tunnel Server</title>
+    <meta charset="utf-8">
+</head>
+<body>
+    <h1>Pure Tunnel Server</h1>
+    <p>Path: ${path}</p>
+    <p>Host: ${hostname}</p>
+    <p>Subdomain: ${subdomain}</p>
+    <p>Create tunnel: <a href="/?new">/?new</a></p>
+    <p>API Status: <a href="/api/status">/api/status</a></p>
+</body>
+</html>
+            `);
         } catch (err) {
             console.error('Server error:', err);
             res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
