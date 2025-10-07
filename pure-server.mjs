@@ -53,8 +53,8 @@ export default function createServer(opt = {}) {
                 return;
             }
 
-            // Create tunnel endpoint
-            if (path === '/' && !subdomain) {
+            // Create tunnel endpoint - handle both / and /?new
+            if (path === '/') {
                 if (url.searchParams.has('new')) {
                     const id = generateId();
                     clients.set(id, { 
@@ -73,9 +73,27 @@ export default function createServer(opt = {}) {
                     res.end(JSON.stringify(info));
                     return;
                 }
-                res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
-                res.end('pure-server is running');
-                return;
+                
+                // Landing page for root domain (no subdomain)
+                if (!subdomain) {
+                    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+                    res.end(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pure Tunnel Server</title>
+    <meta charset="utf-8">
+</head>
+<body>
+    <h1>Pure Tunnel Server</h1>
+    <p>Server is running and ready to create tunnels.</p>
+    <p>Create a new tunnel: <a href="/?new">/?new</a></p>
+    <p>API Status: <a href="/api/status">/api/status</a></p>
+</body>
+</html>
+                    `);
+                    return;
+                }
             }
 
             // Subdomain routing - proxy to client
