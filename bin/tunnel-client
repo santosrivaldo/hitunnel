@@ -9,6 +9,7 @@ function parseArgs() {
     const options = {
         host: 'localhost',
         port: 3000,
+        tcpPort: 3000,
         localPort: 8080,
         localHost: 'localhost',
         secure: false
@@ -21,6 +22,9 @@ function parseArgs() {
                 break;
             case '--port':
                 options.port = parseInt(args[++i]);
+                break;
+            case '--tcp-port':
+                options.tcpPort = parseInt(args[++i]);
                 break;
             case '--local-port':
                 options.localPort = parseInt(args[++i]);
@@ -39,7 +43,8 @@ Uso: node bin/tunnel-client [opções]
 
 Opções:
   --host <host>        Servidor de túnel (padrão: localhost)
-  --port <port>        Porta do servidor (padrão: 3000)
+  --port <port>        Porta HTTP do servidor (padrão: 3000)
+  --tcp-port <port>    Porta TCP do servidor (padrão: 3000)
   --local-port <port>  Porta local a expor (padrão: 8080)
   --local-host <host>  Host local (padrão: localhost)
   --secure            Usar HTTPS

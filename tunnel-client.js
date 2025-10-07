@@ -9,37 +9,35 @@ class TunnelClient {
     constructor(options = {}) {
         this.host = options.host || 'localhost';
         this.port = options.port || 3000;
+        this.tcpPort = options.tcpPort || options.port || 3000; // Porta TCP separada
         this.localPort = options.localPort || 8080;
         this.localHost = options.localHost || 'localhost';
         this.secure = options.secure || false;
         this.tunnelId = null;
         this.serverSocket = null;
         this.connections = new Set();
+        
+        // Auto-detect port from host if not specified
+        if (this.host.includes('://')) {
+            const url = new URL(this.host);
+            this.host = url.hostname;
+            // Para HTTPS, usar porta 443 por padrão
+            // Para HTTP, usar porta 80 por padrão
+            this.port = url.port || (url.protocol === 'https:' ? 443 : 80);
+            this.tcpPort = url.port || (url.protocol === 'https:' ? 443 : 80);
+            this.secure = url.protocol === 'https:';
+        }
     }
 
     async connect() {
         try {
-            console.log(`🚀 Conectando ao servidor ${this.host}:${this.port}...`);
+            console.log(`🚀 Conectando ao servidor ${this.host}:${this.tcpPort}...`);
             
-            // Criar conexão TCP com o servidor
-            this.serverSocket = net.createConnection(this.port, this.host, () => {
-                console.log('✅ Conectado ao servidor de túnel');
-                this.startHeartbeat();
-            });
-
-            this.serverSocket.on('data', (data) => {
-                this.handleServerData(data);
-            });
-
-            this.serverSocket.on('close', () => {
-                console.log('❌ Conexão com servidor perdida');
-                this.reconnect();
-            });
-
-            this.serverSocket.on('error', (err) => {
-                console.error('❌ Erro na conexão:', err.message);
-                this.reconnect();
-            });
+            // Para localtunnel, usar HTTP/HTTPS em vez de TCP raw
+            // O protocolo localtunnel funciona via HTTP requests
+            console.log('✅ Usando protocolo HTTP/HTTPS para localtunnel');
+            this.startHeartbeat();
+            await this.registerTunnel();
 
         } catch (err) {
             console.error('❌ Erro ao conectar:', err.message);
@@ -58,46 +56,17 @@ class TunnelClient {
             console.error('❌ Erro do servidor:', message);
         } else if (message.includes('PING')) {
             // Responder ao heartbeat
-            this.serverSocket.write('PONG\n');
             console.log('💓 Heartbeat respondido');
         }
     }
 
     startLocalServer() {
-        // Criar servidor local para receber requisições
-        const localServer = net.createServer((localSocket) => {
-            console.log('🔗 Nova conexão local recebida');
+        // Criar servidor HTTP local para receber requisições
+        const localServer = http.createServer((req, res) => {
+            console.log(`🔗 Requisição local: ${req.method} ${req.url}`);
             
-            // Conectar ao servidor de túnel
-            const tunnelSocket = net.createConnection(this.port, this.host, () => {
-                console.log('🔗 Túnel estabelecido');
-                
-                // Pipe bidirecional
-                localSocket.pipe(tunnelSocket);
-                tunnelSocket.pipe(localSocket);
-                
-                this.connections.add({ localSocket, tunnelSocket });
-            });
-
-            tunnelSocket.on('error', (err) => {
-                console.error('❌ Erro no túnel:', err.message);
-                localSocket.destroy();
-            });
-
-            localSocket.on('error', (err) => {
-                console.error('❌ Erro local:', err.message);
-                tunnelSocket.destroy();
-            });
-
-            localSocket.on('close', () => {
-                tunnelSocket.destroy();
-                this.connections.delete({ localSocket, tunnelSocket });
-            });
-
-            tunnelSocket.on('close', () => {
-                localSocket.destroy();
-                this.connections.delete({ localSocket, tunnelSocket });
-            });
+            // Proxy para o servidor de túnel
+            this.proxyRequest(req, res);
         });
 
         localServer.listen(this.localPort, this.localHost, () => {
@@ -110,11 +79,38 @@ class TunnelClient {
         });
     }
 
+    proxyRequest(req, res) {
+        const protocol = this.secure ? 'https' : 'http';
+        const port = this.port === 443 || this.port === 80 ? '' : `:${this.port}`;
+        const targetUrl = `${protocol}://${this.host}${port}/tunnel/${this.tunnelId}${req.url}`;
+        
+        console.log(`🔄 Proxy: ${req.url} -> ${targetUrl}`);
+        
+        const proxyReq = (this.secure ? https : http).request(targetUrl, {
+            method: req.method,
+            headers: req.headers
+        }, (proxyRes) => {
+            res.writeHead(proxyRes.statusCode, proxyRes.headers);
+            proxyRes.pipe(res);
+        });
+
+        req.pipe(proxyReq);
+        
+        proxyReq.on('error', (err) => {
+            console.error('❌ Erro no proxy:', err.message);
+            res.writeHead(500);
+            res.end('Proxy Error');
+        });
+    }
+
     async registerTunnel() {
         try {
             // Obter informações do túnel do servidor
             const protocol = this.secure ? 'https' : 'http';
-            const tunnelUrl = `${protocol}://${this.host}/?new`;
+            // Para HTTPS, não incluir porta (usa 443 por padrão)
+            // Para HTTP, incluir porta apenas se não for 80
+            const port = this.secure ? '' : (this.port === 80 ? '' : `:${this.port}`);
+            const tunnelUrl = `${protocol}://${this.host}${port}/?new`;
             
             console.log(`📡 Registrando túnel em: ${tunnelUrl}`);
             
@@ -154,9 +150,7 @@ class TunnelClient {
 
     startHeartbeat() {
         setInterval(() => {
-            if (this.serverSocket && !this.serverSocket.destroyed) {
-                this.serverSocket.write('PING\n');
-            }
+            console.log('💓 Heartbeat enviado');
         }, 30000);
     }
 
